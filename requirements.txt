@@ -1,0 +1,14 @@
+# torch is NOT listed here on purpose — install it separately with the correct
+# CUDA index URL first (see README setup), then this file. Otherwise a plain
+# `pip install -r requirements.txt` can silently pull the CPU-only wheel from
+# PyPI's default index and overwrite the CUDA build.
+numpy>=1.26
+pandas>=2.2
+scikit-learn>=1.4
+sentence-transformers>=2.6
+pyyaml>=6.0
+tqdm>=4.66
+matplotlib>=3.8
+seaborn>=0.13
+streamlit>=1.33
+pytest>=8.0

@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# Data — track only the small sample subset
+data/raw/*
+data/processed/*
+!data/sample/
+!data/sample/**
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# Model artifacts / eval outputs
+checkpoints/*
+!checkpoints/.gitkeep
+eval/results/*
+!eval/results/.gitkeep
+
+# Notebooks checkpoints
+.ipynb_checkpoints/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Env / secrets
+.env
+
+# Streamlit
+.streamlit/
