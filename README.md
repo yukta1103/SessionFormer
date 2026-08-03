@@ -68,4 +68,20 @@ python -c "import torch; print(torch.__version__, torch.cuda.is_available(), tor
 
 ## Dataset
 
-Download from [Kaggle: RetailRocket e-commerce dataset](https://www.kaggle.com/datasets/retailrocket/ecommerce-dataset) and place `events.csv`, `item_properties_part1.csv`, `item_properties_part2.csv`, and `category_tree.csv` into `data/raw/`. A small sample subset is checked into `data/sample/` so the pipeline can be run end-to-end without downloading the full dataset first.
+Download from [Kaggle: RetailRocket e-commerce dataset](https://www.kaggle.com/datasets/retailrocket/ecommerce-dataset) and place `events.csv`, `item_properties_part1.csv`, `item_properties_part2.csv`, and `category_tree.csv` into `data/raw/`. A small sample subset (~2.7k events) is checked into `data/sample/` so the pipeline can be run end-to-end without downloading the full dataset first.
+
+## Data pipeline
+
+Sessionizes raw events (30-min inactivity timeout), filters sessions shorter than 2 interactions, builds an item vocabulary from the train split, assigns a time-based train/val/test split by session start date, and flags cold-start items/users (few train interactions) for separate evaluation later. Parameters live in `config/data.yaml`.
+
+```powershell
+python scripts/prepare_data.py --data-dir data/raw --out-dir data/processed
+```
+
+Run on the checked-in sample instead of the full dataset with `--data-dir data/sample`. Outputs land in `data/processed/`: `sessions.parquet` (sessionized events with a `split` column), `vocab.json`, `cold_start_items.json`, `cold_start_users.json`.
+
+Run unit tests (sessionization edge cases, vocab, split boundaries):
+
+```powershell
+python -m pytest tests/ -v
+```

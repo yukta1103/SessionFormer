@@ -1,0 +1,9 @@
+session_timeout_minutes: 30
+min_session_length: 2
+
+val_start_date: "2015-09-05"
+test_start_date: "2015-09-12"
+test_end_date: "2015-09-18"
+
+cold_start_item_min_train_interactions: 5
+cold_start_user_min_train_interactions: 5
