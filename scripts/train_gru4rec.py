@@ -99,6 +99,8 @@ def main() -> None:
     checkpoint_path = Path(args.checkpoint)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     best_recall = -1.0
+    epochs_since_improvement = 0
+    patience = cfg.get("early_stopping_patience", 3)
 
     for epoch in range(1, cfg["epochs"] + 1):
         start = time.time()
@@ -121,8 +123,14 @@ def main() -> None:
 
         if val_recall > best_recall:
             best_recall = val_recall
+            epochs_since_improvement = 0
             torch.save({"model_state": model.state_dict(), "config": cfg}, checkpoint_path)
             print(f"  -> saved new best checkpoint ({checkpoint_path}), val_recall@10={val_recall:.4f}")
+        else:
+            epochs_since_improvement += 1
+            if epochs_since_improvement >= patience:
+                print(f"No val_recall@10 improvement for {patience} epochs, stopping early.")
+                break
 
     print(f"Best val_recall@10: {best_recall:.4f}")
 

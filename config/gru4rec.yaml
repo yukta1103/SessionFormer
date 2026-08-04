@@ -4,6 +4,7 @@ hidden_dim: 64
 num_layers: 1
 num_negatives: 100
 batch_size: 128
-epochs: 15
+epochs: 20
+early_stopping_patience: 3
 lr: 0.001
 seed: 42
