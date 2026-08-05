@@ -1,0 +1,12 @@
+embedding_dim: 32
+num_heads: 2
+num_blocks: 1
+ff_hidden_dim: 64
+dropout: 0.2
+batch_size: 256
+epochs: 20
+early_stopping_patience: 3
+lr: 0.001
+seed: 42
+top_k_mining: 50
+num_hard_negatives: 5
