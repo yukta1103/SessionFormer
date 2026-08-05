@@ -10,7 +10,7 @@ import yaml
 from torch.utils.data import DataLoader
 
 from sessionformer.data.dataset import SessionDataset
-from sessionformer.models.gru4rec import GRU4Rec
+from sessionformer.models.sasrec import SASRec
 from sessionformer.negatives.sampler import UniformNegativeSampler
 from sessionformer.utils.seed import set_seed
 from sessionformer.utils.training import sessions_by_split, train_with_early_stopping
@@ -18,9 +18,9 @@ from sessionformer.utils.training import sessions_by_split, train_with_early_sto
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="config/gru4rec.yaml")
+    parser.add_argument("--config", default="config/sasrec.yaml")
     parser.add_argument("--data-dir", default="data/processed")
-    parser.add_argument("--checkpoint", default="checkpoints/gru4rec_best.pt")
+    parser.add_argument("--checkpoint", default="checkpoints/sasrec_best.pt")
     args = parser.parse_args()
 
     cfg = yaml.safe_load(Path(args.config).read_text())
@@ -37,11 +37,14 @@ def main() -> None:
     train_loader = DataLoader(train_ds, batch_size=cfg["batch_size"], shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=cfg["batch_size"], shuffle=False)
 
-    model = GRU4Rec(
+    model = SASRec(
         vocab_size=len(vocab),
+        max_seq_len=cfg["max_seq_len"],
         embedding_dim=cfg["embedding_dim"],
-        hidden_dim=cfg["hidden_dim"],
-        num_layers=cfg["num_layers"],
+        num_heads=cfg["num_heads"],
+        num_blocks=cfg["num_blocks"],
+        ff_hidden_dim=cfg["ff_hidden_dim"],
+        dropout=cfg["dropout"],
     ).to(device)
     sampler = UniformNegativeSampler(vocab_size=len(vocab), num_negatives=cfg["num_negatives"])
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg["lr"])

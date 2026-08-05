@@ -1,0 +1,12 @@
+max_seq_len: 50
+embedding_dim: 64
+num_heads: 2
+num_blocks: 2
+ff_hidden_dim: 128
+dropout: 0.2
+num_negatives: 100
+batch_size: 128
+epochs: 40
+early_stopping_patience: 3
+lr: 0.001
+seed: 42
