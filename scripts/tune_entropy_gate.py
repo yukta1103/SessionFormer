@@ -1,4 +1,5 @@
 import argparse
+import json
 import time
 from pathlib import Path
 
@@ -92,6 +93,7 @@ def main() -> None:
     parser.add_argument("--reranker-config", default="config/reranker.yaml")
     parser.add_argument("--reranker-checkpoint", default="checkpoints/reranker_best.pt")
     parser.add_argument("--candidate-pool-k", type=int, default=20)
+    parser.add_argument("--gate-out", default="checkpoints/entropy_gate_threshold.json")
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir)
@@ -157,6 +159,11 @@ def main() -> None:
     _, best_pct, best_threshold, best_fire_rate, best_recall = best
     print()
     print(f"Best on val: percentile={best_pct:.0f}% threshold={best_threshold:.4f} fire_rate={best_fire_rate:.1%} recall={best_recall:.4f}")
+
+    gate_out = Path(args.gate_out)
+    gate_out.parent.mkdir(parents=True, exist_ok=True)
+    gate_out.write_text(json.dumps({"threshold": best_threshold, "candidate_pool_k": args.candidate_pool_k}))
+    print(f"Saved tuned gate threshold to {gate_out}")
 
     # Honesty check: apply the val-tuned threshold to the untouched test split.
     test_entropy, test_hits_plain, test_hits_reranked = collect_predictions(
