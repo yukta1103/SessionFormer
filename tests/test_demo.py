@@ -1,0 +1,51 @@
+import torch
+
+from app.demo import get_predictions
+from sessionformer.data.vocab import ItemVocab
+from sessionformer.gating.entropy_gate import EntropyGate
+from sessionformer.models.reranker import Reranker
+from sessionformer.models.sasrec import SASRec
+
+MAX_SEQ_LEN = 10
+
+
+def _vocab(n_items: int = 20) -> ItemVocab:
+    return ItemVocab.build(range(100, 100 + n_items))
+
+
+def _models(vocab: ItemVocab):
+    sasrec = SASRec(vocab_size=len(vocab), max_seq_len=MAX_SEQ_LEN, embedding_dim=8, num_heads=2, num_blocks=1, ff_hidden_dim=16)
+    reranker = Reranker(vocab_size=len(vocab), max_seq_len=MAX_SEQ_LEN, embedding_dim=8, num_heads=2, num_blocks=1, ff_hidden_dim=16)
+    return sasrec, reranker
+
+
+def test_get_predictions_shapes_and_keys_when_gate_always_fires():
+    vocab = _vocab()
+    sasrec, reranker = _models(vocab)
+    gate = EntropyGate(threshold=-1.0)  # always fires -> exercise the reranker branch
+    device = torch.device("cpu")
+
+    item_ids = [100, 101, 102, 103, 104]
+    steps = get_predictions(sasrec, reranker, gate, vocab, device, MAX_SEQ_LEN, item_ids)
+
+    assert len(steps) == len(item_ids) - 1
+    for i, step in enumerate(steps):
+        assert step["context_ids"] == item_ids[: i + 1]
+        assert step["target_id"] == item_ids[i + 1]
+        assert step["gate_fired"] is True
+        assert len(step["plain_topk_ids"]) == 10
+        assert len(step["reranked_topk_ids"]) == 10
+
+
+def test_get_predictions_skips_reranker_when_gate_never_fires():
+    vocab = _vocab()
+    sasrec, reranker = _models(vocab)
+    gate = EntropyGate(threshold=1e9)  # never fires
+    device = torch.device("cpu")
+
+    item_ids = [100, 101, 102]
+    steps = get_predictions(sasrec, reranker, gate, vocab, device, MAX_SEQ_LEN, item_ids)
+
+    for step in steps:
+        assert step["gate_fired"] is False
+        assert step["reranked_topk_ids"] is None

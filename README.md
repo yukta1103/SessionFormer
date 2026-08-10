@@ -85,3 +85,13 @@ Run unit tests (sessionization edge cases, vocab, split boundaries):
 ```powershell
 python -m pytest tests/ -v
 ```
+
+## Demo
+
+A Streamlit app steps through a random test-split session one interaction at a time, showing SASRec's top-10 predictions, the entropy of that prediction, whether the entropy gate fired, and the reranked top-10 when it does.
+
+```powershell
+streamlit run app/demo.py
+```
+
+Item IDs shown are RetailRocket's raw anonymized product IDs — the dataset has no real product names or images.
