@@ -1,12 +1,29 @@
 import torch
 
-from app.demo import get_predictions
+from app.demo import clamp_step, get_predictions
 from sessionformer.data.vocab import ItemVocab
 from sessionformer.gating.entropy_gate import EntropyGate
 from sessionformer.models.reranker import Reranker
 from sessionformer.models.sasrec import SASRec
 
 MAX_SEQ_LEN = 10
+
+
+def test_clamp_step_keeps_valid_index_in_range():
+    assert clamp_step(2, 5) == 2
+
+
+def test_clamp_step_caps_at_last_valid_index():
+    # e.g. Next was clicked right as a shorter session got shuffled in
+    assert clamp_step(5, 3) == 2
+
+
+def test_clamp_step_floors_at_zero():
+    assert clamp_step(-1, 3) == 0
+
+
+def test_clamp_step_handles_zero_steps_without_going_negative():
+    assert clamp_step(0, 0) == 0
 
 
 def _vocab(n_items: int = 20) -> ItemVocab:

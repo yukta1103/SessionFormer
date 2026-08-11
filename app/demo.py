@@ -112,6 +112,12 @@ def get_predictions(sasrec, reranker, gate, vocab, device, max_seq_len, item_ids
     return steps
 
 
+def clamp_step(step: int, num_steps: int) -> int:
+    """Keeps a step index within [0, num_steps - 1], including the
+    num_steps == 0 edge case (clamps to 0 rather than going negative)."""
+    return max(0, min(step, num_steps - 1))
+
+
 def main() -> None:
     st.set_page_config(page_title="SessionFormer demo", layout="wide")
     st.title("SessionFormer: session-by-session demo")
@@ -133,7 +139,7 @@ def main() -> None:
     item_ids = st.session_state.session_items
     steps = get_predictions(sasrec, reranker, gate, vocab, device, max_seq_len, item_ids)
     num_steps = len(steps)
-    st.session_state.step = min(st.session_state.step, num_steps - 1)
+    st.session_state.step = clamp_step(st.session_state.step, num_steps)
 
     nav_col1, nav_col2, _ = st.columns([1, 1, 4])
     with nav_col1:
@@ -143,6 +149,9 @@ def main() -> None:
         if st.button("Next step", disabled=st.session_state.step >= num_steps - 1):
             st.session_state.step += 1
 
+    # Re-clamp: the button handlers above mutate step after the clamp
+    # above ran, so indexing must not trust that earlier clamp alone.
+    st.session_state.step = clamp_step(st.session_state.step, num_steps)
     step = steps[st.session_state.step]
     st.subheader(f"Step {st.session_state.step + 1} of {num_steps}")
 
