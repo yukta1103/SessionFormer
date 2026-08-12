@@ -23,3 +23,13 @@ def build_item_text(item_properties: pd.DataFrame) -> dict[int, str]:
     all_tokens = pd.concat([category_tokens[["itemid", "token"]], other[["itemid", "token"]]])
     grouped = all_tokens.groupby("itemid")["token"].apply(lambda tokens: " ".join(tokens))
     return grouped.to_dict()
+
+
+def build_item_categories(item_properties: pd.DataFrame) -> dict[int, str]:
+    """Most recent categoryid per item only -- a much lighter artifact than
+    the full pseudo-document text, for display purposes (e.g. a demo UI)
+    where loading hundreds of MB of property text per item would be
+    impractical."""
+    category_rows = item_properties[item_properties["property"] == "categoryid"]
+    latest = category_rows.sort_values("timestamp").drop_duplicates(subset=["itemid"], keep="last")
+    return dict(zip(latest["itemid"], latest["value"].astype(str)))

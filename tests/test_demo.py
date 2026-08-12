@@ -3,7 +3,7 @@
 import pandas  # noqa: F401
 import torch
 
-from app.demo import clamp_step, get_predictions
+from app.demo import clamp_step, format_item, get_predictions, score_step
 from sessionformer.data.vocab import ItemVocab
 from sessionformer.gating.entropy_gate import EntropyGate
 from sessionformer.models.reranker import Reranker
@@ -55,6 +55,8 @@ def test_get_predictions_shapes_and_keys_when_gate_always_fires():
         assert step["gate_fired"] is True
         assert len(step["plain_topk_ids"]) == 10
         assert len(step["reranked_topk_ids"]) == 10
+        assert step["final_topk_ids"] == step["reranked_topk_ids"]
+        assert step["is_hit"] == (step["target_id"] in step["final_topk_ids"])
 
 
 def test_get_predictions_skips_reranker_when_gate_never_fires():
@@ -69,3 +71,33 @@ def test_get_predictions_skips_reranker_when_gate_never_fires():
     for step in steps:
         assert step["gate_fired"] is False
         assert step["reranked_topk_ids"] is None
+        assert step["final_topk_ids"] == step["plain_topk_ids"]
+        assert step["is_hit"] == (step["target_id"] in step["plain_topk_ids"])
+
+
+def test_format_item_without_category():
+    assert format_item(123, {}) == "#123"
+
+
+def test_format_item_with_category():
+    assert format_item(123, {123: "42"}) == "#123 (category 42)"
+
+
+def test_score_step_counts_a_new_step_once():
+    scored, hits, total = score_step(True, 0, set(), hits=0, total=0)
+    assert scored == {0}
+    assert hits == 1
+    assert total == 1
+
+
+def test_score_step_counts_a_miss():
+    scored, hits, total = score_step(False, 0, set(), hits=0, total=0)
+    assert hits == 0
+    assert total == 1
+
+
+def test_score_step_does_not_double_count_a_revisited_step():
+    scored, hits, total = score_step(True, 0, set(), hits=0, total=0)
+    scored, hits, total = score_step(True, 0, scored, hits=hits, total=total)
+    assert hits == 1
+    assert total == 1

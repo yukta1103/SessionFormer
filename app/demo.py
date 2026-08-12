@@ -67,6 +67,38 @@ def load_demo_sessions():
     return [items for items in grouped if MIN_LEN <= len(items) <= MAX_LEN]
 
 
+@st.cache_data
+def load_item_categories() -> dict:
+    path = DATA_DIR / "item_categories.json"
+    if not path.exists():
+        return {}
+    raw = json.loads(path.read_text())
+    return {int(k): v for k, v in raw.items()}
+
+
+def format_item(item_id: int, categories: dict) -> str:
+    category = categories.get(item_id)
+    return f"#{item_id} (category {category})" if category else f"#{item_id}"
+
+
+def clamp_step(step: int, num_steps: int) -> int:
+    """Keeps a step index within [0, num_steps - 1], including the
+    num_steps == 0 edge case (clamps to 0 rather than going negative)."""
+    return max(0, min(step, num_steps - 1))
+
+
+def score_step(is_hit: bool, step_index: int, scored_steps: set, hits: int, total: int):
+    """Updates the running tally the first time a given step is viewed;
+    revisiting a step via Previous/Next doesn't double-count it."""
+    if step_index in scored_steps:
+        return scored_steps, hits, total
+    scored_steps = scored_steps | {step_index}
+    total += 1
+    if is_hit:
+        hits += 1
+    return scored_steps, hits, total
+
+
 def get_predictions(sasrec, reranker, gate, vocab, device, max_seq_len, item_ids):
     item_indices = [vocab.encode(i) for i in item_ids]
     input_items = item_indices[:-1]
@@ -99,42 +131,60 @@ def get_predictions(sasrec, reranker, gate, vocab, device, max_seq_len, item_ids
                 reranked_pool = torch.gather(pool, 1, order)[0].tolist()
             reranked_topk_ids = [vocab.decode(i) for i in reranked_pool]
 
+        target_id = item_ids[pos + 1]
+        final_topk_ids = reranked_topk_ids if fires else plain_topk_ids
+
         steps.append(
             {
                 "context_ids": item_ids[: pos + 1],
-                "target_id": item_ids[pos + 1],
+                "target_id": target_id,
                 "entropy": step_entropy,
                 "gate_fired": fires,
                 "plain_topk_ids": plain_topk_ids,
                 "reranked_topk_ids": reranked_topk_ids,
+                "final_topk_ids": final_topk_ids,
+                "is_hit": target_id in final_topk_ids,
             }
         )
     return steps
 
 
-def clamp_step(step: int, num_steps: int) -> int:
-    """Keeps a step index within [0, num_steps - 1], including the
-    num_steps == 0 edge case (clamps to 0 rather than going negative)."""
-    return max(0, min(step, num_steps - 1))
+def _new_session(demo_sessions) -> None:
+    st.session_state.session_items = random.choice(demo_sessions)
+    st.session_state.step = 0
+    st.session_state.scored_steps = set()
+    st.session_state.hits = 0
+    st.session_state.total = 0
 
 
 def main() -> None:
     st.set_page_config(page_title="SessionFormer demo", layout="wide")
-    st.title("SessionFormer: session-by-session demo")
-    st.caption(
-        "Item IDs are RetailRocket's raw anonymized product IDs -- the dataset has no real names or images."
+    st.title("SessionFormer: watch it predict, live")
+    st.markdown(
+        "A next-click predictor trained on real (anonymized) e-commerce browsing sessions. "
+        "Step through a real session and watch it guess what the shopper clicked next — and "
+        "whether it decided a slower, more careful second check was worth the extra time."
     )
+    with st.expander("How to read this"):
+        st.markdown(
+            "- **Model confidence** reflects how sure the model is about its own top guess, based "
+            "on patterns it learned during training — not whether that guess is actually correct.\n"
+            "- **Entropy gate**: when confidence is low, a slower \"second opinion\" model (the "
+            "reranker) is called in to double-check the top-10 order. When confidence is high, "
+            "that extra step is skipped to save compute.\n"
+            "- Item IDs are RetailRocket's raw anonymized product IDs — there are no real names or "
+            "images in this dataset. A category code is shown alongside each ID where available."
+        )
 
     sasrec, reranker, gate, vocab, device, max_seq_len, cold_items = load_artifacts()
     demo_sessions = load_demo_sessions()
+    categories = load_item_categories()
 
     if "session_items" not in st.session_state:
-        st.session_state.session_items = random.choice(demo_sessions)
-        st.session_state.step = 0
+        _new_session(demo_sessions)
 
     if st.button("Shuffle session"):
-        st.session_state.session_items = random.choice(demo_sessions)
-        st.session_state.step = 0
+        _new_session(demo_sessions)
 
     item_ids = st.session_state.session_items
     steps = get_predictions(sasrec, reranker, gate, vocab, device, max_seq_len, item_ids)
@@ -153,39 +203,56 @@ def main() -> None:
     # above ran, so indexing must not trust that earlier clamp alone.
     st.session_state.step = clamp_step(st.session_state.step, num_steps)
     step = steps[st.session_state.step]
-    st.subheader(f"Step {st.session_state.step + 1} of {num_steps}")
 
-    st.write("**Session so far:** " + " -> ".join(f"#{i}" for i in step["context_ids"]))
-    target_is_cold = step["target_id"] in cold_items
-    cold_note = " _(cold-start item)_" if target_is_cold else ""
-    st.write(f"**True next item:** #{step['target_id']}{cold_note}")
+    st.session_state.scored_steps, st.session_state.hits, st.session_state.total = score_step(
+        step["is_hit"], st.session_state.step, st.session_state.scored_steps, st.session_state.hits, st.session_state.total
+    )
 
-    entropy_col, gate_col = st.columns(2)
-    with entropy_col:
-        st.metric("Prediction entropy", f"{step['entropy']:.3f}")
-        st.progress(min(step["entropy"] / (gate.threshold * 2), 1.0))
-        st.caption(f"Gate threshold: {gate.threshold:.3f}")
+    header_col1, header_col2 = st.columns([2, 1])
+    with header_col1:
+        st.subheader(f"Step {st.session_state.step + 1} of {num_steps}")
+    with header_col2:
+        st.metric("Score so far", f"{st.session_state.hits}/{st.session_state.total} correct")
+
+    context_str = " -> ".join(format_item(i, categories) for i in step["context_ids"])
+    st.write(f"**Session so far:** {context_str}")
+
+    target_label = format_item(step["target_id"], categories)
+    cold_note = " _(cold-start item — little training history)_" if step["target_id"] in cold_items else ""
+    st.write(f"**What the shopper actually clicked next:** {target_label}{cold_note}")
+
+    if step["is_hit"]:
+        st.success(f"Correct — {target_label} was in the top 10")
+    else:
+        st.error(f"Missed — {target_label} was not in the top 10")
+
+    conf_col, gate_col = st.columns(2)
+    with conf_col:
+        st.metric("Model confidence", "High" if not step["gate_fired"] else "Low")
+        meter = min(step["entropy"] / (gate.threshold * 2), 1.0) if gate.threshold > 0 else 0.0
+        st.progress(meter)
+        st.caption(f"Raw uncertainty score: {step['entropy']:.3f} (gate threshold: {gate.threshold:.3f})")
     with gate_col:
         if step["gate_fired"]:
-            st.success("Entropy gate FIRED — reranker invoked")
+            st.info("Confidence was low, so the second-opinion model was called in to double-check.")
         else:
-            st.info("Entropy gate did not fire — SASRec's top-10 trusted directly")
+            st.info("Confidence was high enough that the fast model's guess was trusted directly.")
 
     pred_col1, pred_col2 = st.columns(2)
     with pred_col1:
-        st.write("**SASRec top-10**")
+        st.write("**Fast model's top 10**")
         for rank, item_id in enumerate(step["plain_topk_ids"], start=1):
-            marker = " <- true next item" if item_id == step["target_id"] else ""
-            st.write(f"{rank}. #{item_id}{marker}")
+            marker = " <- what actually happened" if item_id == step["target_id"] else ""
+            st.write(f"{rank}. {format_item(item_id, categories)}{marker}")
 
     with pred_col2:
         if step["gate_fired"]:
-            st.write("**Reranked top-10**")
+            st.write("**After the second opinion (reordered)**")
             for rank, item_id in enumerate(step["reranked_topk_ids"], start=1):
-                marker = " <- true next item" if item_id == step["target_id"] else ""
-                st.write(f"{rank}. #{item_id}{marker}")
+                marker = " <- what actually happened" if item_id == step["target_id"] else ""
+                st.write(f"{rank}. {format_item(item_id, categories)}{marker}")
         else:
-            st.write("_Reranker not invoked at this step_")
+            st.write("_Second opinion skipped this time — the fast model was confident enough_")
 
 
 if __name__ == "__main__":
