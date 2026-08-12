@@ -113,6 +113,7 @@ def get_predictions(sasrec, reranker, gate, vocab, device, max_seq_len, item_ids
         scores[:, PAD_IDX] = float("-inf")
         scores[:, UNK_IDX] = float("-inf")
         entropy = softmax_entropy(scores)
+        probs = torch.softmax(scores, dim=-1)
         topk = scores.topk(TOP_K, dim=-1).indices
 
     steps = []
@@ -120,8 +121,10 @@ def get_predictions(sasrec, reranker, gate, vocab, device, max_seq_len, item_ids
         step_entropy = entropy[pos].item()
         fires = bool(gate.should_refine(entropy[pos]).item())
         plain_topk_ids = [vocab.decode(i) for i in topk[pos].tolist()]
+        plain_topk_probs = probs[pos, topk[pos]].tolist()
 
         reranked_topk_ids = None
+        reranked_topk_scores = None
         if fires:
             with torch.no_grad():
                 pool = topk[pos : pos + 1]
@@ -129,6 +132,8 @@ def get_predictions(sasrec, reranker, gate, vocab, device, max_seq_len, item_ids
                 rerank_scores = reranker.score_candidates(input_seq, lengths, pool)
                 order = rerank_scores.argsort(dim=-1, descending=True)
                 reranked_pool = torch.gather(pool, 1, order)[0].tolist()
+                reranked_scores_sorted = torch.gather(rerank_scores, 1, order)
+                reranked_topk_scores = torch.softmax(reranked_scores_sorted, dim=-1)[0].tolist()
             reranked_topk_ids = [vocab.decode(i) for i in reranked_pool]
 
         target_id = item_ids[pos + 1]
@@ -141,12 +146,29 @@ def get_predictions(sasrec, reranker, gate, vocab, device, max_seq_len, item_ids
                 "entropy": step_entropy,
                 "gate_fired": fires,
                 "plain_topk_ids": plain_topk_ids,
+                "plain_topk_probs": plain_topk_probs,
                 "reranked_topk_ids": reranked_topk_ids,
+                "reranked_topk_scores": reranked_topk_scores,
                 "final_topk_ids": final_topk_ids,
                 "is_hit": target_id in final_topk_ids,
             }
         )
     return steps
+
+
+def predictions_dataframe(item_ids, values, target_id, categories: dict) -> pd.DataFrame:
+    """Builds a chart-ready table: one row per candidate, its score, and
+    whether it's the item that actually happened next -- used to color the
+    correct bar differently from the rest."""
+    rows = [
+        {
+            "item": format_item(item_id, categories),
+            "score": value,
+            "type": "Correct next item" if item_id == target_id else "Other guess",
+        }
+        for item_id, value in zip(item_ids, values)
+    ]
+    return pd.DataFrame(rows).set_index("item")
 
 
 def _new_session(demo_sessions) -> None:
@@ -204,9 +226,12 @@ def main() -> None:
     st.session_state.step = clamp_step(st.session_state.step, num_steps)
     step = steps[st.session_state.step]
 
+    is_new_step = st.session_state.step not in st.session_state.scored_steps
     st.session_state.scored_steps, st.session_state.hits, st.session_state.total = score_step(
         step["is_hit"], st.session_state.step, st.session_state.scored_steps, st.session_state.hits, st.session_state.total
     )
+    if is_new_step and step["is_hit"]:
+        st.balloons()
 
     header_col1, header_col2 = st.columns([2, 1])
     with header_col1:
@@ -240,17 +265,17 @@ def main() -> None:
 
     pred_col1, pred_col2 = st.columns(2)
     with pred_col1:
-        st.write("**Fast model's top 10**")
-        for rank, item_id in enumerate(step["plain_topk_ids"], start=1):
-            marker = " <- what actually happened" if item_id == step["target_id"] else ""
-            st.write(f"{rank}. {format_item(item_id, categories)}{marker}")
+        st.write("**Fast model's top 10** _(bar height = how strongly it believes each guess)_")
+        plain_df = predictions_dataframe(step["plain_topk_ids"], step["plain_topk_probs"], step["target_id"], categories)
+        st.bar_chart(plain_df, y="score", color="type", horizontal=True)
 
     with pred_col2:
         if step["gate_fired"]:
             st.write("**After the second opinion (reordered)**")
-            for rank, item_id in enumerate(step["reranked_topk_ids"], start=1):
-                marker = " <- what actually happened" if item_id == step["target_id"] else ""
-                st.write(f"{rank}. {format_item(item_id, categories)}{marker}")
+            reranked_df = predictions_dataframe(
+                step["reranked_topk_ids"], step["reranked_topk_scores"], step["target_id"], categories
+            )
+            st.bar_chart(reranked_df, y="score", color="type", horizontal=True)
         else:
             st.write("_Second opinion skipped this time — the fast model was confident enough_")
 
