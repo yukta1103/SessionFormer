@@ -1,3 +1,6 @@
+# Import pandas (which eagerly loads pyarrow) before torch: see
+# sessionformer/utils/training.py's docstring note.
+import pandas  # noqa: F401
 import torch
 
 from app.demo import clamp_step, get_predictions
