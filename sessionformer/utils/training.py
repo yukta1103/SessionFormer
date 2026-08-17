@@ -34,7 +34,22 @@ def train_step(model, sampler, input_seq: torch.Tensor, target_seq: torch.Tensor
     mask = (target_seq != PAD_IDX).float()
     pos_scores = model.score(hidden, target_seq.unsqueeze(-1)).squeeze(-1)
     negatives = sampler.sample(target_seq)
-    neg_scores = model.score(hidden, negatives)
+
+    # Explicit hard negative: the item already at this position (input_seq[i]
+    # is exactly "the item immediately before the thing being predicted").
+    # Uniform random sampling over a ~129k-item vocab almost never happens to
+    # draw this specific item, so without folding it in here the loss never
+    # directly penalizes echoing the input back out when that's wrong. Folded
+    # into the same averaged negative pool (not a separate full-weight loss
+    # term) so it gets proportional weight rather than doubling the
+    # "push everything down" pressure relative to the positive signal.
+    # Wherever the echo is genuinely correct (a real repeat click), it's
+    # replaced with a harmless duplicate of an existing negative instead of
+    # penalizing it.
+    is_wrong_echo = input_seq != target_seq
+    self_negative = torch.where(is_wrong_echo, input_seq, negatives[..., 0])
+    all_negatives = torch.cat([negatives, self_negative.unsqueeze(-1)], dim=-1)
+    neg_scores = model.score(hidden, all_negatives)
 
     pos_loss = -F.logsigmoid(pos_scores)
     neg_loss = -F.logsigmoid(-neg_scores).mean(dim=-1)
