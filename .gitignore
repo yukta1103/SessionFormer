@@ -8,19 +8,28 @@ venv/
 build/
 dist/
 
-# Data — track only the small sample subset
+# Data — track only the small sample subset and the small exported demo assets
 data/raw/*
 data/processed/*
 !data/sample/
 !data/sample/**
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+!data/processed/vocab.json
+!data/processed/cold_start_items.json
+!data/processed/demo_sessions.json
+!data/processed/demo_item_categories.json
 
-# Model artifacts / eval outputs
+# Model artifacts / eval outputs — track only what the deployed demo needs
 checkpoints/*
 !checkpoints/.gitkeep
+!checkpoints/sasrec_best.pt
+!checkpoints/reranker_best.pt
+!checkpoints/entropy_gate_threshold.json
 eval/results/*
 !eval/results/.gitkeep
+!eval/results/comparison_table.csv
+!eval/results/echo_bias_diagnostic.txt
 
 # Notebooks checkpoints
 .ipynb_checkpoints/

@@ -3,7 +3,10 @@ import random
 from pathlib import Path
 
 # Import pandas (which eagerly loads pyarrow) before torch: see
-# sessionformer/utils/training.py's docstring note.
+# sessionformer/utils/training.py's docstring note. Still needed here even
+# though the demo no longer reads sessions.parquet, because predictions_
+# dataframe() below builds a pd.DataFrame for the bar charts -- the DLL
+# ordering risk is about import order, not about which pandas API is used.
 import pandas as pd
 import streamlit as st
 import torch
@@ -15,7 +18,6 @@ from sessionformer.models.reranker import Reranker
 from sessionformer.models.sasrec import SASRec
 
 DATA_DIR = Path("data/processed")
-MIN_LEN, MAX_LEN = 4, 15
 TOP_K = 10
 
 
@@ -61,15 +63,16 @@ def load_artifacts():
 
 @st.cache_data
 def load_demo_sessions():
-    sessions = pd.read_parquet(DATA_DIR / "sessions.parquet")
-    test = sessions[sessions["split"] == "test"]
-    grouped = test.groupby("session_id")["itemid"].apply(list)
-    return [items for items in grouped if MIN_LEN <= len(items) <= MAX_LEN]
+    """Pre-filtered test-split sessions (length 4-15), exported once by
+    scripts/export_demo_assets.py -- a small, self-contained artifact
+    instead of bundling the full sessions.parquet (train+val+test, ~19MB)
+    just to source a handful of demo sessions."""
+    return json.loads((DATA_DIR / "demo_sessions.json").read_text())
 
 
 @st.cache_data
 def load_item_categories() -> dict:
-    path = DATA_DIR / "item_categories.json"
+    path = DATA_DIR / "demo_item_categories.json"
     if not path.exists():
         return {}
     raw = json.loads(path.read_text())

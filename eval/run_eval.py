@@ -14,6 +14,7 @@ from torch.utils.data import DataLoader
 from eval.metrics import mrr, ndcg_at_k, recall_at_k
 from sessionformer.baselines.item_knn import ItemKNNBaseline
 from sessionformer.baselines.popularity import PopularityBaseline
+from sessionformer.content.fusion import cosine_scores, fuse_scores, session_content_vector
 from sessionformer.data.dataset import SessionDataset
 from sessionformer.data.vocab import PAD_IDX, UNK_IDX, ItemVocab
 from sessionformer.gating.entropy_gate import EntropyGate, softmax_entropy
@@ -74,12 +75,31 @@ def predict_neural(model, loader, device) -> tuple:
 
 
 @torch.no_grad()
-def predict_sasrec_family(sasrec, reranker, gate_threshold, loader, device) -> tuple:
+def predict_sasrec_family(
+    sasrec,
+    reranker,
+    gate_threshold,
+    loader,
+    device,
+    item_content_embeddings: "torch.Tensor | None" = None,
+    is_cold_item_tensor: "torch.Tensor | None" = None,
+    fusion_alpha: "float | None" = None,
+) -> tuple:
+    """Predicts the SASRec-alone / always-rerank / gated-rerank variants, and,
+    when content-fusion inputs are given, the parallel fusion variants built
+    on the same reranker and gate -- so the ablation table (full system vs.
+    without reranker vs. without gate vs. without fusion) comes from one
+    coherent pipeline instead of two disconnected evaluations. The entropy
+    gate always decides from SASRec's own (pre-fusion) distribution, since
+    that's the genuine model-confidence signal the gate was tuned against;
+    fusion only changes which candidates get surfaced and in what order."""
     sasrec.eval()
     reranker.eval()
+    use_fusion = item_content_embeddings is not None
     all_pool, all_reranked = [], []
+    all_fused_pool, all_fused_reranked = [], []
     entropies = []
-    sasrec_time, rerank_time, total = 0.0, 0.0, 0
+    sasrec_time, rerank_time, fusion_time, total = 0.0, 0.0, 0.0, 0
 
     for input_seq, target_seq, lengths in loader:
         input_seq, lengths = input_seq.to(device), lengths.to(device)
@@ -91,7 +111,12 @@ def predict_sasrec_family(sasrec, reranker, gate_threshold, loader, device) -> t
         t0 = time.perf_counter()
         hidden = sasrec.encode_sequence(input_seq)
         last_hidden = hidden[batch_idx, last_idx]
-        scores = sasrec.score_all_items(last_hidden)
+        raw_scores = sasrec.score_all_items(last_hidden)
+        # Keep an unmasked copy for fuse_scores below: masking PAD/UNK to
+        # -inf before its min-max normalization would corrupt every score in
+        # the row (x - (-inf) = inf). Masked only on this working copy, used
+        # for entropy/pool/reranking, which never touches fuse_scores.
+        scores = raw_scores.clone()
         scores[:, PAD_IDX] = float("-inf")
         scores[:, UNK_IDX] = float("-inf")
         pool = scores.topk(TOPK, dim=-1).indices
@@ -112,6 +137,29 @@ def predict_sasrec_family(sasrec, reranker, gate_threshold, loader, device) -> t
 
         all_pool.append(pool.cpu().numpy())
         all_reranked.append(reranked_pool.cpu().numpy())
+
+        if use_fusion:
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            t0 = time.perf_counter()
+            query = session_content_vector(item_content_embeddings, input_seq)
+            content_scores = cosine_scores(query, item_content_embeddings)
+            fused_scores = fuse_scores(raw_scores, content_scores, is_cold_item_tensor, fusion_alpha)
+            # Mask PAD/UNK only now, after fuse_scores' own normalization.
+            fused_scores[:, PAD_IDX] = float("-inf")
+            fused_scores[:, UNK_IDX] = float("-inf")
+            fused_pool = fused_scores.topk(TOPK, dim=-1).indices
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            fusion_time += time.perf_counter() - t0
+
+            fused_rerank_scores = reranker.score_candidates(input_seq, lengths, fused_pool)
+            fused_reranked_order = fused_rerank_scores.argsort(dim=-1, descending=True)
+            fused_reranked_pool = torch.gather(fused_pool, 1, fused_reranked_order)
+
+            all_fused_pool.append(fused_pool.cpu().numpy())
+            all_fused_reranked.append(fused_reranked_pool.cpu().numpy())
+
         total += input_seq.size(0)
 
     sasrec.train()
@@ -135,6 +183,22 @@ def predict_sasrec_family(sasrec, reranker, gate_threshold, loader, device) -> t
         "SASRec+AlwaysRerank": sasrec_ms + rerank_ms,
         "SASRec+GatedRerank": sasrec_ms + fire_rate * rerank_ms,
     }
+
+    if use_fusion:
+        fused_pool = np.concatenate(all_fused_pool)
+        fused_reranked = np.concatenate(all_fused_reranked)
+        fused_gated = np.where(fire[:, None], fused_reranked, fused_pool)
+        fusion_ms = fusion_time / total * 1000
+
+        # Naming matches the README's ablation table: "FullSystem" is fusion
+        # + gated rerank; each other key drops exactly one component from it.
+        predictions["SASRec+Fusion"] = fused_pool  # without reranker
+        predictions["SASRec+Fusion+AlwaysRerank"] = fused_reranked  # without entropy gate
+        predictions["FullSystem"] = fused_gated  # without nothing (full system)
+        latencies["SASRec+Fusion"] = sasrec_ms + fusion_ms
+        latencies["SASRec+Fusion+AlwaysRerank"] = sasrec_ms + fusion_ms + rerank_ms
+        latencies["FullSystem"] = sasrec_ms + fusion_ms + fire_rate * rerank_ms
+
     return predictions, latencies, fire_rate
 
 
@@ -159,6 +223,8 @@ def main() -> None:
     parser.add_argument("--reranker-config", default="config/reranker.yaml")
     parser.add_argument("--reranker-checkpoint", default="checkpoints/reranker_best.pt")
     parser.add_argument("--gate-config", default="checkpoints/entropy_gate_threshold.json")
+    parser.add_argument("--fusion-config", default="config/content_fusion.yaml")
+    parser.add_argument("--content-embeddings", default="data/processed/item_content_embeddings.npy")
     parser.add_argument("--out-dir", default="eval/results")
     args = parser.parse_args()
 
@@ -232,8 +298,22 @@ def main() -> None:
     reranker.load_state_dict(torch.load(args.reranker_checkpoint, map_location=device)["model_state"])
 
     gate_threshold = json.loads(Path(args.gate_config).read_text())["threshold"]
+
+    fusion_cfg = yaml.safe_load(Path(args.fusion_config).read_text())
+    item_content_embeddings = torch.from_numpy(np.load(args.content_embeddings)).to(device)
+    is_cold_item_tensor = torch.zeros(len(vocab), dtype=torch.bool, device=device)
+    for idx in is_cold_item:
+        is_cold_item_tensor[idx] = True
+
     sasrec_preds, sasrec_latencies, fire_rate = predict_sasrec_family(
-        sasrec, reranker, gate_threshold, test_loader, device
+        sasrec,
+        reranker,
+        gate_threshold,
+        test_loader,
+        device,
+        item_content_embeddings=item_content_embeddings,
+        is_cold_item_tensor=is_cold_item_tensor,
+        fusion_alpha=fusion_cfg["alpha"],
     )
     predictions.update(sasrec_preds)
     latencies.update(sasrec_latencies)

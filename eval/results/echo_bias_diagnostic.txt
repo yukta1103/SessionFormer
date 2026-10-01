@@ -1,0 +1,10 @@
+Echo-bias diagnostic, AFTER the fix (commit 5770e79), SASRec on val split
+Checkpoint: checkpoints/sasrec_best.pt
+Total val examples: 18604
+Recall@10: 0.4633
+top-1 prediction == last context item: 14243 (0.7656)
+  of which WRONG (target != last item but model predicted last item anyway): 8806 (0.4733)
+True rate of target == last context item in the data: 7223 (0.3882)
+Fraction of predictions with near-zero entropy (<0.01): 33 (0.0018)
+Mean cosine(hidden_state, embedding of last input item) = 0.4532
+Mean cosine(hidden_state, embedding of a random item)   = -0.2322

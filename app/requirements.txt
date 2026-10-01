@@ -1,0 +1,13 @@
+# Deployment-only requirements for the Streamlit demo (app/demo.py), separate
+# from the project's root requirements.txt because that one deliberately
+# excludes torch (installed from a CUDA index for local training/eval) and
+# includes heavy training-only dependencies (sentence-transformers,
+# scikit-learn, matplotlib) the demo never imports. This file pulls the
+# CPU-only torch wheel, since Streamlit Community Cloud / Hugging Face
+# Spaces free tiers have no GPU.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.6.0
+pandas>=2.2
+pyyaml>=6.0
+streamlit>=1.33
+-e .
